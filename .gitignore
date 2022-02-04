@@ -1,0 +1,4 @@
+configdb
+*.swp
+__pycache__
+startup.json
