@@ -41,6 +41,7 @@ class CoreWrapper:
             template=self.cfgtemplate,
             main_template=self.common_cfgtemplate
         )
+        self.gs_db = GuildStateDB()
 
         # Task registry
         self.task_registry = job.TaskRegistry()
@@ -64,8 +65,8 @@ class CoreWrapper:
         self.crontask = None
 
         # Register discord events
-        # TODO On guild leave
         self.bot.add_listener(self.on_guild_join, 'on_guild_join')
+        self.bot.add_listener(self.on_guild_remove, 'on_guild_remove')
         self.bot.add_listener(self.on_ready, 'on_ready')
 
         self.jobs_resumed = False
@@ -162,10 +163,19 @@ class CoreWrapper:
 
         logging.info("Core ready.")
 
-    # Add a new config slice if we join a new guild.
+    # NOTE
+    # There's no need to create a cfg or guildstate on guild join,
+    # because those objects will be created the first time they're
+    # accessed.
     async def on_guild_join(self, guild):
         logging.info("Joined new guild: {}({})".format(guild.name, guild.id))
-        await self.config_db.create_config(guild)
+
+    # On leave however, we need to delete non-persistent guild state, to
+    # prevent any strangeness. As a policy we remember config of guilds
+    # we were in previously. FIXME Might need to come back to that
+    async def on_guild_remove(self, guild):
+        logging.info("Left guild: {}({})".format(guild.name, guild.id))
+        self.gs_db.delete(guild)
 
     #########################
     # UTILITY / PASSTHROUGH #
@@ -213,6 +223,16 @@ class CoreWrapper:
     def cfg(self, ctx):
         cfg = self.config_db.get_config(ctx.guild)
         return cfg
+
+    # Register a guild state class.
+    def gstype(self, state_type):
+        self.gs_db.register_cls(state_type)
+
+    # Shortcut to get the guild state for a given discord object.
+    # Supports ctx, ints, guilds, and anything else that has a
+    # guild property.
+    def gs(self, state_type, guild_entity):
+        return self.gs_db.get(state_type, guild_entity)
 
 
 ######################################
@@ -742,3 +762,67 @@ class ConfigCogBase(commands.Cog):
             return go
 
         return decorator
+
+
+class GuildStateException(KeyError):
+    pass
+
+
+# Container for guild specific state that doesn't need to be saved between runs.
+# A GuildState may be any type, as long as it needs no constructor arguments.
+class GuildStateDB:
+    def __init__(self):
+        self.types = {}
+        self.statedb = {}
+
+    @staticmethod
+    def typekey(state_type):
+        return state_type.__qualname__
+
+    def register_cls(self, state_type):
+        k = self.typekey(state_type)
+        if k in self.types:
+            msg = "GuildState type {} is already registered."
+            raise GuildStateException(msg.format(state_type.__name__))
+
+        self.types[k] = state_type
+        self.statedb[k] = {}
+
+    @staticmethod
+    def _force_guild_id(guild_entity):
+        if isinstance(guild_entity, discord.Guild):
+            guild = guild_entity.id
+        elif hasattr(guild_entity, "guild"):
+            guild = guild_entity.guild.id
+        elif isinstance(guild_entity, int):
+            guild = guild_entity
+        else:
+            raise TypeError("Guild key must be guild, have a .guild param, or be an integer.")
+
+        return guild
+
+    # Get a state instance from the DB. If there's no
+    # instance for the given guild, one will be created.
+    def get(self, state_type, guild_entity):
+        guild = self._force_guild_id(guild_entity)
+
+        k = self.typekey(state_type)
+        if k not in self.types:
+            msg = "GuildState type {} has not been registered."
+            raise GuildStateException(msg.format(state_type.__name__))
+
+        try:
+            return self.statedb[k][guild]
+        except KeyError:
+            gs = self.types[k]()
+            self.statedb[k][guild] = gs
+
+            return gs
+
+    # Clear all state associated with the given guild.
+    def delete(self, guild_entity):
+        guild = self._force_guild_id(guild_entity)
+
+        for states in self.statedb.values():
+            if guild in states:
+                del guild[states]
