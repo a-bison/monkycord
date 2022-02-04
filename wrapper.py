@@ -336,7 +336,7 @@ class MessageTask(job.JobTask):
 
 # Optional cog containing job management commands for testing/administration
 # NOTE: This cog requires the Members intent.
-class JobManagement(commands.Cog):
+class JobManagementCog(commands.Cog, name="Job Management"):
     def __init__(self, core):
         self.core = core
 
@@ -612,7 +612,7 @@ class JobManagement(commands.Cog):
 
 
 # Optional cog for debugging core.job library functions
-class JobDebug(commands.Cog):
+class JobDebugCog(commands.Cog, name="Job Debug"):
     @commands.command()
     async def testcronparse(self, ctx, cron: str):
         """Test parsing of cron strings."""
