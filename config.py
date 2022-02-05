@@ -5,6 +5,8 @@
 import logging
 import json
 
+logger = logging.getLogger(__name__)
+
 
 # Very simple config database consisting of json files on disk.
 # Saves a different version of the config depending on the guild.
@@ -37,7 +39,7 @@ class JsonConfigDB:
         try:
             self.path.mkdir()
         except FileNotFoundError:
-            logging.error("Parent directories of config not found.")
+            logger.error("Parent directories of config not found.")
             raise
 
     def cfg_loc(self, guild_id):
@@ -64,7 +66,7 @@ class JsonConfigDB:
 
             self.db[guild_id] = JsonConfig(self.cfg_loc(guild_id),
                                            self.template)
-            logging.info("Load config: guild id {}".format(guild_id))
+            logger.info("Load config: guild id {}".format(guild_id))
 
     def write_db(self):
         for cfg in self.db.values():

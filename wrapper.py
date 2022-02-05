@@ -15,6 +15,8 @@ from . import util
 from .exception import NotAdministrator
 from .util import ack
 
+logger = logging.getLogger(__name__)
+
 
 # High level interface to the bot core.
 # Automatically links together cfg and job systems, and subscribes to
@@ -91,7 +93,7 @@ class CoreWrapper:
                 await self.resume_job(job_header)
 
             msg = "Resumed {} unfinished job(s) in guild {}"
-            logging.info(msg.format(len(jobs), guild_id))
+            logger.info(msg.format(len(jobs), guild_id))
 
     # Resume job from a loaded job header dict.
     async def resume_job(self, header):
@@ -107,7 +109,7 @@ class CoreWrapper:
                 await self.reschedule_cron(sched_header)
 
             msg = "Loaded {} schedule(s) in guild {}"
-            logging.info(msg.format(len(crons), guild_id))
+            logger.info(msg.format(len(crons), guild_id))
 
     # Get the config object for a given job/cron header.
     def get_cfg_for_header(self, header):
@@ -150,7 +152,7 @@ class CoreWrapper:
     # Create configs for any guilds we were added to while offline
     async def join_guilds_offline(self):
         async for guild in self.bot.fetch_guilds():
-            logging.info("In guilds: {}({})".format(guild.name, guild.id))
+            logger.info("In guilds: {}({})".format(guild.name, guild.id))
             _ = self.config_db.get_config(guild)
 
         self.config_db.write_db()
@@ -161,20 +163,20 @@ class CoreWrapper:
             await self.resume_jobs()
             self.jobs_resumed = True
 
-        logging.info("Core ready.")
+        logger.info("Core ready.")
 
     # NOTE
     # There's no need to create a cfg or guildstate on guild join,
     # because those objects will be created the first time they're
     # accessed.
     async def on_guild_join(self, guild):
-        logging.info("Joined new guild: {}({})".format(guild.name, guild.id))
+        logger.info("Joined new guild: {}({})".format(guild.name, guild.id))
 
     # On leave however, we need to delete non-persistent guild state, to
     # prevent any strangeness. As a policy we remember config of guilds
     # we were in previously. FIXME Might need to come back to that
     async def on_guild_remove(self, guild):
-        logging.info("Left guild: {}({})".format(guild.name, guild.id))
+        logger.info("Left guild: {}({})".format(guild.name, guild.id))
         self.gs_db.delete(guild)
 
     #########################

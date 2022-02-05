@@ -13,6 +13,8 @@ import functools
 import logging
 import time
 
+logger = logging.getLogger(__name__)
+
 
 #########
 # UTILS #
@@ -74,7 +76,7 @@ class JobTask(ABC):
     # is the responsibility of the caller.
     def display(self, header):
         msg = "display() not implemented for task {}"
-        logging.warning(msg.format(header.task_type))
+        logger.warning(msg.format(header.task_type))
 
         return ""
 
@@ -266,25 +268,25 @@ class JobQueue:
         self.active_task = None
 
     async def run(self):
-        logging.info("Starting job queue...")
+        logger.info("Starting job queue...")
 
         try:
             while True:
                 await self.mainloop()
         except:
-            logging.exception("Job queue stopped unexpectedly!")
+            logger.exception("Job queue stopped unexpectedly!")
         finally:
-            logging.info("Job queue stoppped.")
+            logger.info("Job queue stoppped.")
 
     async def mainloop(self):
         j = await self.job_queue.get()
 
         if j.header.cancel:
-            logging.info("Skipping cancelled job " + str(j.header.id))
+            logger.info("Skipping cancelled job " + str(j.header.id))
             self._rm_job(self.active_job)
             return
 
-        logging.info("Start new job " + str(j.header.as_dict()))
+        logger.info("Start new job " + str(j.header.as_dict()))
         self.active_job = j
 
         # Schedule task
@@ -298,9 +300,9 @@ class JobQueue:
         try:
             await task
         except asyncio.CancelledError:
-            logging.warning("Uncaught CancelledError in job " + str(j.header.id))
+            logger.warning("Uncaught CancelledError in job " + str(j.header.id))
         except:
-            logging.exception("Got exception while running job")
+            logger.exception("Got exception while running job")
         finally:
             if self.active_job:
                 # Notify any listeners on this job that it's done.
@@ -604,12 +606,12 @@ def cron_next_date(schedule, from_date=None, carry=0):
         month_la = next_date["month"]
         year_la = next_date["year"]
 
-        logging.info("cron_next_date(): month overrun, recalc day")
+        logger.info("cron_next_date(): month overrun, recalc day")
 
         if month_la == 12:
             month_la = 1
             year_la += 1
-            logging.info("cron_next_date(): year overrun")
+            logger.info("cron_next_date(): year overrun")
         else:
             month_la += 1
 
@@ -682,7 +684,7 @@ def _next_elem(elem_name, elem, carry, t, schedule):
     new_elem = elem + carry
     new_carry = 0
 
-    logging.info("next_elem(): {}: {}({}) -> {}".format(
+    logger.info("next_elem(): {}: {}({}) -> {}".format(
         elem_name,
         elem,
         new_elem,
@@ -807,7 +809,7 @@ class JobCron:
             # functions to validate the cron str before scheduling.
             sheader.update_next()
 
-            logging.info("New schedule created: " + str(sheader.as_dict()))
+            logger.info("New schedule created: " + str(sheader.as_dict()))
             if self.sched_create_callback is not None:
                 await self.sched_create_callback(sheader)
 
@@ -816,7 +818,7 @@ class JobCron:
     async def run(self):
         # The background task that starts jobs. Checks if there are new jobs
         # to start roughly once every minute.
-        logging.info("Starting job scheduler...")
+        logger.info("Starting job scheduler...")
 
         try:
             while True:
@@ -827,7 +829,7 @@ class JobCron:
                 async with self.schedule_lock:
                     await self.mainloop()
         except:
-            logging.exception("Scheduler stopped unexpectedly!")
+            logger.exception("Scheduler stopped unexpectedly!")
 
     # Single iteration of schedule dispatch.
     async def mainloop(self):
@@ -841,7 +843,7 @@ class JobCron:
     async def _start_scheduled_job(self, cron_header):
         job = await self.jobfactory.create_job_from_cron(cron_header)
         msg = "SCHED {}: Firing job type={} {}"
-        logging.info(msg.format(
+        logger.info(msg.format(
             cron_header.id, job.header.task_type, job.task.display(job.header)
         ))
         await self.jobqueue.submit_job(job)
