@@ -4,35 +4,33 @@
 
 import logging
 import json
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
 
 # Very simple config database consisting of json files on disk.
-# Saves a different version of the config depending on the guild.
+# Saves a different version of the config depending on the ID.
 #
 # On disk structure:
 # config_root_dir \_ common.json
-#                 |_ <guild_id_1>.json
-#                 |_ <guild_id_2>.json
+#                 |_ <id_1>.json
+#                 |_ <id_2>.json
 #
 class JsonConfigDB:
-    def __init__(self, path, template=None, main_template=None):
+    def __init__(self, path, template=None, unique_template=False):
         self.path = path
         self.db = {}
         self.template = template
-        self.main_template = main_template
-        self.main_cfg = None
+        self.unique_template = unique_template
 
         if path.is_dir():
             self.load_db()
         elif path.exists():
             msg = "config {} is not a directory"
             raise FileExistsError(msg.format(str(path)))
-        else: # No file or dir, so create new
+        else:  # No file or dir, so create new
             self.create_new_db()
-
-        self.load_main_cfg()
         
     # Creates a new config DB
     def create_new_db(self):
@@ -42,15 +40,19 @@ class JsonConfigDB:
             logger.error("Parent directories of config not found.")
             raise
 
-    def cfg_loc(self, guild_id):
-        return self.path / (str(guild_id) + ".json")
+    def cfg_loc(self, cid):
+        return self.path / (str(cid) + ".json")
 
-    def common_cfg_loc(self):
-        return self.path / "common.json"
+    def get_template(self, cid):
+        if self.unique_template:
+            cid = str(cid)
 
-    def load_main_cfg(self):
-        loc = self.common_cfg_loc()
-        self.main_cfg = JsonConfig(loc, self.main_template)
+            if cid in self.template:
+                return self.template[cid]
+            else:
+                return {}
+        else:
+            return self.template
 
     # Loads the entire DB from a directory on disk.
     # Note that this will override any configuration currently loaded in
@@ -60,13 +62,13 @@ class JsonConfigDB:
 
         for child in self.path.iterdir():
             try:
-                guild_id = int(child.stem)
+                cid = child.stem
             except ValueError:
                 continue
 
-            self.db[guild_id] = JsonConfig(self.cfg_loc(guild_id),
-                                           self.template)
-            logger.info("Load config: guild id {}".format(guild_id))
+            template = self.get_template(cid)
+            self.db[cid] = JsonConfig(self.cfg_loc(cid), template)
+            logger.info("Load config: id {}".format(cid))
 
     def write_db(self):
         for cfg in self.db.values():
@@ -74,18 +76,19 @@ class JsonConfigDB:
 
     # Gets the config for a single guild. If the config for a guild doesn't
     # exist, create it.
-    def get_config(self, guild):
-        if guild.id not in self.db:
-            self.create_config(guild)
+    def get_config(self, cid):
+        cid = str(cid)
 
-        return self.db[guild.id]
+        if cid not in self.db:
+            self.create_config(cid)
 
-    # Gets state and config common to all guilds.
-    def get_common_config(self):
-        return self.main_cfg
+        return self.db[cid]
 
-    def create_config(self, guild):
-        self.db[guild.id] = JsonConfig(self.cfg_loc(guild.id), self.template)
+    def create_config(self, cid):
+        cid = str(cid)
+        template = self.get_template(cid)
+
+        self.db[cid] = JsonConfig(self.cfg_loc(cid), template)
 
 
 # Mixin for configuration. Expects the following:
@@ -119,6 +122,9 @@ class ConfigMixin:
 
         return cfg
 
+    def __contains__(self, item):
+        return item in self.opts
+
 
 # Enable a config to get subconfigs.
 class SubconfigMixin:
@@ -146,15 +152,26 @@ class SubConfig(ConfigMixin, SubconfigMixin):
         self.parent.write()
 
 
+class ConfigException(Exception):
+    pass
+
+
 # Simple on-disk persistent configuration for one guild (or anything else that
 # only needs one file)
+#
+# If check_date=True, before writing the config, we check to see if
+# it's been modified after we last loaded/wrote the config. If so,
+# raise an exception. Use this if you intend to edit the config manually,
+# and want to make sure your modifications aren't overwritten.
 class JsonConfig(ConfigMixin, SubconfigMixin):
-    def __init__(self, path, template=None):
+    def __init__(self, path, template=None, check_date=False):
         super().__init__()
 
         self.opts = {}
         self.path = path
         self.template = template
+        self.check_date = check_date
+        self.last_readwrite_date = None
         self.init()
 
     def init(self):
@@ -163,16 +180,32 @@ class JsonConfig(ConfigMixin, SubconfigMixin):
         else:
             self.create()
 
+    def __update_last_date(self):
+        self.last_readwrite_date = datetime.now().timestamp()
+
     def load(self):
         template = self.template
 
         with open(self.path, 'r') as f:
             self.opts = dict(json.load(f))
 
+        # On load, force update last date. If the json file modify
+        # date has been brought past this by a manual edit, write()
+        # will refuse to complete unless load() is called again.
+        # (only if self.check_date=True)
+        self.__update_last_date()
+
         if template is not None:
+            template_additions = False
+
             for key, value in self.template.items():
                 if key not in self.opts:
                     self.opts[key] = template[key]
+                    template_additions = True
+
+            # Do not write unless we make changes here.
+            if template_additions:
+                self.write()
 
     def create(self):
         if self.template is not None:
@@ -182,7 +215,18 @@ class JsonConfig(ConfigMixin, SubconfigMixin):
 
     def clear(self):
         self.opts = {}
-   
+
     def write(self):
+        if self.path.exists() and self.check_date:
+            file_timestamp = self.path.stat().st_mtime
+
+            # If file was modified after last load/write,
+            # refuse to write.
+            if file_timestamp > self.last_readwrite_date:
+                msg = "{} has been modified, config must be reloaded"
+                raise ConfigException(msg.format(self.path))
+
         with open(self.path, 'w') as f:
             json.dump(self.opts, f, indent=4)
+
+        self.__update_last_date()

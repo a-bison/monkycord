@@ -22,28 +22,33 @@ logger = logging.getLogger(__name__)
 # Automatically links together cfg and job systems, and subscribes to
 # discord events.
 class CoreWrapper:
-    def __init__(self, bot, config_path, cfgtemplate, common_cfgtemplate):
+    def __init__(self, bot, config_path, cfgtemplate={}, common_cfgtemplate={}):
         self.cfgtemplate = dict(cfgtemplate)
         self.cfgtemplate.update({
             "jobs": {},
             "cron": {}
         })
 
-        self.bot = bot
-
         self.common_cfgtemplate = dict(common_cfgtemplate)
-        self.common_cfgtemplate.update({
+        self.common_cfgtemplate["_monky"] = {
             # save the last schedule id, so we don't overlap new schedules
             # with old ones
             "last_schedule_id": 0
-        })
+        }
+
+        self.bot = bot
 
         self.config_db = config.JsonConfigDB(
-            config_path,
-            template=self.cfgtemplate,
-            main_template=self.common_cfgtemplate
+            config_path / "guildcfg",
+            template=self.cfgtemplate
+        )
+        self.common_config_db = config.JsonConfigDB(
+            config_path / "commoncfg",
+            template=self.common_cfgtemplate,
+            unique_template=True
         )
         self.gs_db = GuildStateDB()
+        self.monkycfg = self.common_config_db.get_config("_monky")
 
         # Task registry
         self.task_registry = job.TaskRegistry()
@@ -62,7 +67,7 @@ class CoreWrapper:
         self.jobcron.on_delete_schedule(self._cfg_sched_delete)
         self.cronfactory = DiscordCronFactory(
             self.task_registry,
-            self.config_db.get_common_config().opts["last_schedule_id"] + 1
+            self.monkycfg.opts["last_schedule_id"] + 1
         )
         self.crontask = None
 
@@ -114,7 +119,7 @@ class CoreWrapper:
     # Get the config object for a given job/cron header.
     def get_cfg_for_header(self, header):
         guild = self.bot.get_guild(header.guild_id)
-        cfg = self.config_db.get_config(guild)
+        cfg = self.config_db.get_config(guild.id)
 
         return cfg
 
@@ -138,8 +143,7 @@ class CoreWrapper:
         cfg = self.get_cfg_for_header(header)
         cfg.sub("cron").set(str(header.id), header.as_dict())
 
-        common_cfg = self.config_db.get_common_config()
-        common_cfg.get_and_set(
+        self.monkycfg.get_and_set(
             "last_schedule_id",
             lambda val: max(val, header.id)
         )
@@ -153,7 +157,7 @@ class CoreWrapper:
     async def join_guilds_offline(self):
         async for guild in self.bot.fetch_guilds():
             logger.info("In guilds: {}({})".format(guild.name, guild.id))
-            _ = self.config_db.get_config(guild)
+            _ = self.config_db.get_config(guild.id)
 
         self.config_db.write_db()
 
@@ -223,7 +227,7 @@ class CoreWrapper:
     # Shortcut to get the config for a given command.
     # Also supports messages.
     def cfg(self, ctx):
-        cfg = self.config_db.get_config(ctx.guild)
+        cfg = self.config_db.get_config(ctx.guild.id)
         return cfg
 
     # Register a guild state class.
@@ -629,7 +633,7 @@ class JobManagementCog(commands.Cog, name="Job Management"):
         for id, cron in self.jc.sched_copy():
             await self.jc.delete_schedule(id)
 
-        await self.core.config_db.get_common_config().set("last_schedule_id", 0)
+        await self.core.monkycfg.set("last_schedule_id", 0)
         await ack(ctx)
 
 
@@ -722,6 +726,7 @@ class ConfigCogBase(commands.Cog):
     #
     # The body of the function is called immediately before the value
     # is set, so it may be used for additional validation/processing.
+    # TODO Currently only supports guild cfg. Support common cfg too.
     @staticmethod
     def cfg_command(
             converter=None,
