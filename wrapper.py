@@ -23,11 +23,7 @@ logger = logging.getLogger(__name__)
 # discord events.
 class CoreWrapper:
     def __init__(self, bot, config_path, cfgtemplate={}, common_cfgtemplate={}):
-        self.cfgtemplate = dict(cfgtemplate)
-        self.cfgtemplate.update({
-            "jobs": {},
-            "cron": {}
-        })
+        self.cfgtemplate = cfgtemplate
 
         self.common_cfgtemplate = dict(common_cfgtemplate)
         self.common_cfgtemplate["_monky"] = {
@@ -46,6 +42,13 @@ class CoreWrapper:
             config_path / "commoncfg",
             template=self.common_cfgtemplate,
             unique_template=True
+        )
+        self.job_db = config.JsonConfigDB(
+            config_path / "jobdb",
+            template={
+                "jobs": {},
+                "cron": {}
+            }
         )
         self.gs_db = GuildStateDB()
         self.monkycfg = self.common_config_db.get_config("_monky")
@@ -91,7 +94,7 @@ class CoreWrapper:
     # Called from on_ready() to ensure that all discord state is init'd
     # properly
     async def resume_jobs(self):
-        for guild_id, cfg in self.config_db.db.items():
+        for guild_id, cfg in self.job_db.db.items():
             jobs = cfg.sub("jobs").get_and_clear()
 
             for job_id, job_header in jobs.items():
@@ -107,7 +110,7 @@ class CoreWrapper:
 
     # Reschedule all cron entries from cfg
     async def reschedule_all_cron(self):
-        for guild_id, cfg in self.config_db.db.items():
+        for guild_id, cfg in self.job_db.db.items():
             crons = cfg.sub("cron").get_and_clear()
 
             for sched_id, sched_header in crons.items():
@@ -117,9 +120,9 @@ class CoreWrapper:
             logger.info(msg.format(len(crons), guild_id))
 
     # Get the config object for a given job/cron header.
-    def get_cfg_for_header(self, header):
+    def get_jobcfg_for_header(self, header):
         guild = self.bot.get_guild(header.guild_id)
-        cfg = self.config_db.get_config(guild.id)
+        cfg = self.job_db.get_config(guild.id)
 
         return cfg
 
@@ -129,18 +132,18 @@ class CoreWrapper:
 
     # When a job is submitted, create an entry in the config DB.
     async def _cfg_job_create(self, header):
-        cfg = self.get_cfg_for_header(header)
+        cfg = self.get_jobcfg_for_header(header)
         cfg.sub("jobs").set(str(header.id), header.as_dict())
 
     # Once a job is done, delete it from the config db.
     async def _cfg_job_delete(self, header):
-        cfg = self.get_cfg_for_header(header)
+        cfg = self.get_jobcfg_for_header(header)
         cfg.sub("jobs").delete(str(header.id), ignore_keyerror=True)
 
     # Add created schedules to the config DB, and increase the
     # last_schedule_id parameter.
     async def _cfg_sched_create(self, header):
-        cfg = self.get_cfg_for_header(header)
+        cfg = self.get_jobcfg_for_header(header)
         cfg.sub("cron").set(str(header.id), header.as_dict())
 
         self.monkycfg.get_and_set(
@@ -150,7 +153,7 @@ class CoreWrapper:
 
     # Remove deleted schedules from the config DB.
     async def _cfg_sched_delete(self, header):
-        cfg = self.get_cfg_for_header(header)
+        cfg = self.get_jobcfg_for_header(header)
         cfg.sub("cron").delete(str(header.id))
 
     # Create configs for any guilds we were added to while offline
@@ -158,8 +161,10 @@ class CoreWrapper:
         async for guild in self.bot.fetch_guilds():
             logger.info("In guilds: {}({})".format(guild.name, guild.id))
             _ = self.config_db.get_config(guild.id)
+            _ = self.job_db.get_config(guild.id)
 
         self.config_db.write_db()
+        self.job_db.write_db()
 
     async def on_ready(self):
         if not self.jobs_resumed:
