@@ -788,6 +788,13 @@ class GuildStateDB:
         self.types[k] = state_type
         self.statedb[k] = {}
 
+    def unregister_cls(self, state_type):
+        k = self.typekey(state_type)
+        self.__check_typekey(k)
+
+        del self.types[k]
+        del self.statedb[k]
+
     @staticmethod
     def _force_guild_id(guild_entity):
         if isinstance(guild_entity, discord.Guild):
@@ -801,22 +808,29 @@ class GuildStateDB:
 
         return guild
 
+    def __check_typekey(self, k):
+        if k not in self.types:
+            msg = "GuildState type {} has not been registered."
+            raise GuildStateException(msg.format(k))
+
+    # Get guild state dict for a given type, and the type itself.
+    def __get_of_type(self, state_type):
+        k = self.typekey(state_type)
+        self.__check_typekey(k)
+
+        return self.types[k], self.statedb[k]
+
     # Get a state instance from the DB. If there's no
     # instance for the given guild, one will be created.
     def get(self, state_type, guild_entity):
         guild = self._force_guild_id(guild_entity)
-
-        k = self.typekey(state_type)
-        if k not in self.types:
-            msg = "GuildState type {} has not been registered."
-            raise GuildStateException(msg.format(state_type.__name__))
+        state_type, guild_states = self.__get_of_type(state_type)
 
         try:
-            return self.statedb[k][guild]
+            return guild_states[guild]
         except KeyError:
-            gs = self.types[k]()
-            self.statedb[k][guild] = gs
-
+            gs = state_type()
+            guild_states[guild] = gs
             return gs
 
     # Clear all state associated with the given guild.
@@ -826,3 +840,8 @@ class GuildStateDB:
         for states in self.statedb.values():
             if guild in states:
                 del guild[states]
+
+    # Iterate over all guild states of a given type
+    def iter_over_type(self, state_type):
+        state_type, guild_states = self.__get_of_type(state_type)
+        yield from guild_states.values()
