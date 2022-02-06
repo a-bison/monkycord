@@ -49,6 +49,7 @@ class Job:
     # Wait for this job to finish.
     async def wait(self):
         await self.complete_event.wait()
+        return self.header.results
 
 
 # Task base class. Subclass this to create your own Tasks.
@@ -119,8 +120,13 @@ class JobHeader:
         # The task type string.
         self.task_type = task_type
 
+        # RUNTIME ATTRIBUTES
+
         # Is the job cancelled?
         self.cancel = False
+
+        # The results of the job, if any.
+        self.results = None
 
     def as_dict(self):
         return {
