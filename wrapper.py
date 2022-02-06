@@ -774,7 +774,11 @@ class ConfigCogBase(commands.Cog):
         return decorator
 
 
-class GuildStateException(KeyError):
+class GuildStateException(Exception):
+    pass
+
+
+class GuildRequiredException(GuildStateException):
     pass
 
 
@@ -807,9 +811,15 @@ class GuildStateDB:
 
     @staticmethod
     def _force_guild_id(guild_entity):
+        if guild_entity is None:
+            raise GuildRequiredException()
+
         if isinstance(guild_entity, discord.Guild):
             guild = guild_entity.id
         elif hasattr(guild_entity, "guild"):
+            if guild_entity.guild is None:
+                raise GuildRequiredException()
+
             guild = guild_entity.guild.id
         elif isinstance(guild_entity, int):
             guild = guild_entity
