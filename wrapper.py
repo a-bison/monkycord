@@ -21,26 +21,26 @@ logger = logging.getLogger(__name__)
 # High level interface to the bot core.
 # Automatically links together cfg and job systems, and subscribes to
 # discord events.
-class CoreWrapper:
-    def __init__(self, bot, config_path, cfgtemplate={}, common_cfgtemplate={}):
-        self.cfgtemplate = cfgtemplate
+class CoreWrapper(commands.Bot):
+    def __init__(self, config_path, *args, cfgtemplate={}, common_cfgtemplate={}, **kwargs):
+        super().__init__(*args, **kwargs)
 
-        self.common_cfgtemplate = dict(common_cfgtemplate)
-        self.common_cfgtemplate["_monky"] = {
+        self.__cfgtemplate = cfgtemplate
+
+        self.__common_cfgtemplate = dict(common_cfgtemplate)
+        self.__common_cfgtemplate["_monky"] = {
             # save the last schedule id, so we don't overlap new schedules
             # with old ones
             "last_schedule_id": 0
         }
 
-        self.bot = bot
-
         self.config_db = config.JsonConfigDB(
             config_path / "guildcfg",
-            template=self.cfgtemplate
+            template=self.__cfgtemplate
         )
         self.common_config_db = config.JsonConfigDB(
             config_path / "commoncfg",
-            template=self.common_cfgtemplate,
+            template=self.__common_cfgtemplate,
             unique_template=True
         )
         self.job_db = config.JsonConfigDB(
@@ -57,11 +57,11 @@ class CoreWrapper:
         self.task_registry = job.TaskRegistry()
 
         # Job executor/consumer component
-        self.jobqueue = job.JobQueue(self.bot.loop)
+        self.jobqueue = job.JobQueue(self.loop)
         self.jobqueue.on_job_submit(self._cfg_job_create)
         self.jobqueue.on_job_stop(self._cfg_job_delete)
         self.jobqueue.on_job_cancel(self._cfg_job_delete)
-        self.jobfactory = DiscordJobFactory(self.task_registry, self.bot)
+        self.jobfactory = DiscordJobFactory(self.task_registry, self)
         self.jobtask = None
 
         # Job scheduler component
@@ -75,14 +75,14 @@ class CoreWrapper:
         self.crontask = None
 
         # Register discord events
-        self.bot.add_listener(self.on_guild_join, 'on_guild_join')
-        self.bot.add_listener(self.on_guild_remove, 'on_guild_remove')
-        self.bot.add_listener(self.on_ready, 'on_ready')
+        self.add_listener(self.__on_guild_join, 'on_guild_join')
+        self.add_listener(self.__on_guild_remove, 'on_guild_remove')
+        self.add_listener(self.__on_ready, 'on_ready')
 
         self.jobs_resumed = False
 
         # Create job consumer and scheduler
-        loop = self.bot.loop
+        loop = self.loop
         self.jobtask = loop.create_task(self.jobqueue.run())
         self.crontask = loop.create_task(self.jobcron.run())
 
@@ -121,7 +121,7 @@ class CoreWrapper:
 
     # Get the config object for a given job/cron header.
     def get_jobcfg_for_header(self, header):
-        guild = self.bot.get_guild(header.guild_id)
+        guild = self.get_guild(header.guild_id)
         cfg = self.job_db.get_config(guild.id)
 
         return cfg
@@ -158,7 +158,7 @@ class CoreWrapper:
 
     # Create configs for any guilds we were added to while offline
     async def join_guilds_offline(self):
-        async for guild in self.bot.fetch_guilds():
+        async for guild in self.fetch_guilds():
             logger.info("In guilds: {}({})".format(guild.name, guild.id))
             _ = self.config_db.get_config(guild.id)
             _ = self.job_db.get_config(guild.id)
@@ -166,7 +166,7 @@ class CoreWrapper:
         self.config_db.write_db()
         self.job_db.write_db()
 
-    async def on_ready(self):
+    async def __on_ready(self):
         if not self.jobs_resumed:
             await self.reschedule_all_cron()
             await self.resume_jobs()
@@ -178,13 +178,13 @@ class CoreWrapper:
     # There's no need to create a cfg or guildstate on guild join,
     # because those objects will be created the first time they're
     # accessed.
-    async def on_guild_join(self, guild):
+    async def __on_guild_join(self, guild):
         logger.info("Joined new guild: {}({})".format(guild.name, guild.id))
 
     # On leave however, we need to delete non-persistent guild state, to
     # prevent any strangeness. As a policy we remember config of guilds
     # we were in previously. FIXME Might need to come back to that
-    async def on_guild_remove(self, guild):
+    async def __on_guild_remove(self, guild):
         logger.info("Left guild: {}({})".format(guild.name, guild.id))
         self.gs_db.delete(guild)
 
@@ -193,13 +193,13 @@ class CoreWrapper:
     #########################
 
     def run(self, secret):
-        loop = self.bot.loop
+        loop = self.loop
 
         try:
             # Perform initialization and log in
-            loop.run_until_complete(self.bot.login(secret))
+            loop.run_until_complete(self.login(secret))
             loop.run_until_complete(self.join_guilds_offline())
-            loop.run_until_complete(self.bot.connect())
+            loop.run_until_complete(self.connect())
 
         except KeyboardInterrupt:
             print("Keyboard Interrupt!")
@@ -370,15 +370,13 @@ class MessageTask(job.JobTask):
 class JobManagementCog(commands.Cog, name="Job Management"):
     def __init__(self, core):
         self.core = core
-
-        self.bot = core.bot
         self.jq = core.jobqueue
         self.jc = core.jobcron
         self.registry = core.task_registry
 
     def pretty_print_job(self, job):
         h = job.header
-        owner = self.bot.get_user(h.owner_id).name
+        owner = self.core.get_user(h.owner_id).name
         s = "{}: owner={} type={}".format(h.id, owner, h.task_type)
 
         if h.schedule_id is not None:
@@ -500,7 +498,7 @@ class JobManagementCog(commands.Cog, name="Job Management"):
         await ack(ctx)
 
     def pretty_print_cron(self, cron):
-        owner = self.bot.get_user(cron.owner_id).name
+        owner = self.core.get_user(cron.owner_id).name
 
         s = "{}: owner={} type={} sched=\"{}\" params={} nextrun=\"{}\""
         s = s.format(
