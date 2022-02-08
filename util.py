@@ -3,6 +3,16 @@ from discord.ext import commands
 import json
 
 
+# Character to use to acknowledge commands. Defaults to a check mark.
+__ack_char = "\U00002705"
+
+
+def override_ack_emoji(emoji):
+    global __ack_char
+
+    __ack_char = emoji
+
+
 def check_administrator():
     async def predicate(ctx):
         return ctx.author.guild_permissions.administrator
@@ -37,7 +47,7 @@ async def process_user_optional(ctx, member, rest):
 
 # React with a check mark for confirmation
 async def ack(ctx):
-    await ctx.message.add_reaction("\U00002705")
+    await ctx.message.add_reaction(__ack_char)
 
 
 def code(s):
