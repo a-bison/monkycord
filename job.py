@@ -47,8 +47,12 @@ class Job:
         self.complete_event.set()
 
     # Wait for this job to finish.
-    async def wait(self):
-        await self.complete_event.wait()
+    async def wait(self, timeout=None):
+        if timeout is None:
+            await self.complete_event.wait()
+        else:
+            await asyncio.wait_for(self.complete_event.wait(), timeout)
+
         return self.header.results
 
 
