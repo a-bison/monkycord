@@ -50,7 +50,7 @@ class CoreWrapper(commands.Bot):
                 "cron": {}
             }
         )
-        self.gs_db = GuildStateDB()
+        self.gs_db = GuildStateDB(self)
         self.monkycfg = self.common_config_db.get_config("_monky")
 
         # Task registry
@@ -774,6 +774,12 @@ class ConfigCogBase(commands.Cog):
         return decorator
 
 
+class GuildStateBase:
+    def __init__(self, bot, guild):
+        self.bot = bot
+        self.guild = guild
+
+
 class GuildStateException(Exception):
     pass
 
@@ -785,15 +791,20 @@ class GuildRequiredException(GuildStateException):
 # Container for guild specific state that doesn't need to be saved between runs.
 # A GuildState may be any type, as long as it needs no constructor arguments.
 class GuildStateDB:
-    def __init__(self):
+    def __init__(self, bot):
         self.types = {}
         self.statedb = {}
+        self.bot = bot
 
     @staticmethod
     def typekey(state_type):
         return state_type.__qualname__
 
     def register_cls(self, state_type):
+        if not issubclass(state_type, GuildStateBase):
+            msg = "GuildState type {} must subclass GuildStateBase"
+            raise GuildStateException(msg.format(state_type.__name__))
+
         k = self.typekey(state_type)
         if k in self.types:
             msg = "GuildState type {} is already registered."
@@ -809,24 +820,21 @@ class GuildStateDB:
         del self.types[k]
         del self.statedb[k]
 
-    @staticmethod
-    def _force_guild_id(guild_entity):
+    def _get_guild_and_id(self, guild_entity):
         if guild_entity is None:
             raise GuildRequiredException()
 
-        if isinstance(guild_entity, discord.Guild):
-            guild = guild_entity.id
-        elif hasattr(guild_entity, "guild"):
-            if guild_entity.guild is None:
-                raise GuildRequiredException()
+        if isinstance(guild_entity, int):
+            return self.bot.get_guild(guild_entity), guild_entity
 
-            guild = guild_entity.guild.id
-        elif isinstance(guild_entity, int):
+        if isinstance(guild_entity, discord.Guild):
             guild = guild_entity
+        elif hasattr(guild_entity, "guild"):
+            guild = guild_entity.guild
         else:
             raise TypeError("Guild key must be guild, have a .guild param, or be an integer.")
 
-        return guild
+        return guild, guild.id
 
     def __check_typekey(self, k):
         if k not in self.types:
@@ -843,23 +851,23 @@ class GuildStateDB:
     # Get a state instance from the DB. If there's no
     # instance for the given guild, one will be created.
     def get(self, state_type, guild_entity):
-        guild = self._force_guild_id(guild_entity)
+        guild, guild_id = self._get_guild_and_id(guild_entity)
         state_type, guild_states = self.__get_of_type(state_type)
 
         try:
-            return guild_states[guild]
+            return guild_states[guild_id]
         except KeyError:
-            gs = state_type()
-            guild_states[guild] = gs
+            gs = state_type(self.bot, guild)
+            guild_states[guild_id] = gs
             return gs
 
     # Clear all state associated with the given guild.
     def delete(self, guild_entity):
-        guild = self._force_guild_id(guild_entity)
+        _, guild_id = self._get_guild_and_id(guild_entity)
 
         for states in self.statedb.values():
-            if guild in states:
-                del guild[states]
+            if guild_id in states:
+                del guild_id[states]
 
     # Iterate over all guild states of a given type
     def iter_over_type(self, state_type):
