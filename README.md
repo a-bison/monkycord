@@ -1,3 +1,7 @@
+# Archived
+
+See [hikari-saru](https://github.com/a-bison/hikari-saru).
+
 # monkycord
 A utility kit for making Discord bots with [discord.py](https://github.com/Rapptz/discord.py)
 
